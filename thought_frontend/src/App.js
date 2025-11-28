@@ -315,7 +315,18 @@ function App() {
       }
 
       const created = await res.json();
-      // Append to list and keep oldest-first order
+      // Store edit token if provided (id->token map)
+      try {
+        if (created && created.id && created.edit_token) {
+          const key = 'thought_edit_tokens';
+          const current = JSON.parse(localStorage.getItem(key) || '{}');
+          current[String(created.id)] = created.edit_token;
+          localStorage.setItem(key, JSON.stringify(current));
+        }
+      } catch {
+        // ignore storage errors
+      }
+      // Append to list and keep oldest-first order (token will be ignored by renderer)
       const next = [...thoughts, created].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       setThoughts(next);
 
@@ -392,6 +403,121 @@ function App() {
     }
     return list;
   }, [groupedByDate]);
+
+  // Local storage helpers for edit tokens
+  function getTokenForId(id) {
+    try {
+      const map = JSON.parse(localStorage.getItem('thought_edit_tokens') || '{}');
+      return map ? map[String(id)] : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  function removeTokenForId(id) {
+    try {
+      const key = 'thought_edit_tokens';
+      const map = JSON.parse(localStorage.getItem(key) || '{}');
+      if (map && Object.prototype.hasOwnProperty.call(map, String(id))) {
+        delete map[String(id)];
+        localStorage.setItem(key, JSON.stringify(map));
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Edit UI state
+  const [editingId, setEditingId] = useState(null);
+  const [editingText, setEditingText] = useState('');
+  const [editError, setEditError] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+
+  async function startEdit(thought) {
+    setEditingId(thought.id);
+    setEditingText(thought.thought_text);
+    setEditError('');
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditingText('');
+    setEditError('');
+  }
+  async function submitEdit(thought) {
+    setEditError('');
+    const newText = (editingText || '').trim();
+    if (newText.length === 0 || newText.length > 500) {
+      setEditError('Thought text must be 1 to 500 characters.');
+      return;
+    }
+    const token = getTokenForId(thought.id);
+    if (!token) {
+      setEditError('Missing edit token for this thought.');
+      return;
+    }
+    try {
+      const res = await fetch(`${apiBase}/thoughts/${encodeURIComponent(thought.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Edit-Token': token,
+        },
+        body: JSON.stringify({ thought_text: newText }),
+      });
+      if (!res.ok) {
+        let msg = `Update failed (${res.status})`;
+        try {
+          const err = await res.json();
+          if (err && (err.detail || err.message)) msg = err.detail || err.message;
+        } catch { /* ignore */ }
+        setEditError(msg);
+        return;
+      }
+      const updated = await res.json();
+      // refresh list item locally
+      const next = thoughts.map(t => (String(t.id) === String(thought.id) ? { ...t, thought_text: updated.thought_text } : t));
+      setThoughts(next);
+      cancelEdit();
+    } catch (e) {
+      setEditError(e.message || 'Network error while updating.');
+    }
+  }
+
+  async function removeThought(thought) {
+    setDeleteError('');
+    const token = getTokenForId(thought.id);
+    if (!token) {
+      setDeleteError('Missing edit token for this thought.');
+      return;
+    }
+    // Confirmation
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm('Delete this thought? This action cannot be undone.');
+    if (!ok) return;
+    try {
+      const res = await fetch(`${apiBase}/thoughts/${encodeURIComponent(thought.id)}`, {
+        method: 'DELETE',
+        headers: {
+          'Accept': 'application/json',
+          'X-Edit-Token': token,
+        },
+      });
+      if (res.status === 204) {
+        // remove from list and localStorage mapping
+        setThoughts(thoughts.filter(t => String(t.id) !== String(thought.id)));
+        removeTokenForId(thought.id);
+        return;
+      }
+      let msg = `Delete failed (${res.status})`;
+      try {
+        const err = await res.json();
+        if (err && (err.detail || err.message)) msg = err.detail || err.message;
+      } catch { /* ignore */ }
+      setDeleteError(msg);
+    } catch (e) {
+      setDeleteError(e.message || 'Network error while deleting.');
+    }
+  }
 
   // Render sections (routes)
   function renderHome() {
@@ -481,24 +607,60 @@ function App() {
             {thoughts.map(t => {
               const key = t.id ?? `${t.username}-${t.created_at}`;
               const isHighlight = highlightId && String(t.id) === String(highlightId);
+              const hasToken = !!getTokenForId(t.id);
+              const isEditing = editingId && String(editingId) === String(t.id);
               return (
                 <li className={`thought-item ${isHighlight ? 'highlight' : ''}`} key={key} id={`thought-${t.id}`}>
-                  <div className="thought-meta">
-                    <span className="thought-date">{formatDate(t.created_at)}</span>
-                    <span className="dot">•</span>
-                    <span className="thought-user">
-                      {userBadge(t.username)}
+                  <div className="thought-meta" style={{ justifyContent: 'space-between' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span className="thought-date">{formatDate(t.created_at)}</span>
+                      <span className="dot">•</span>
+                      <span className="thought-user">
+                        {userBadge(t.username)}
+                      </span>
+                      <span className="dot">•</span>
+                      {streaks.byUser[t.username] ? streakChip(streaks.byUser[t.username].current, 'streak') : null}
                     </span>
-                    <span className="dot">•</span>
-                    {streaks.byUser[t.username] ? streakChip(streaks.byUser[t.username].current, 'streak') : null}
+                    {hasToken && !isEditing && (
+                      <span style={{ display: 'inline-flex', gap: 8 }}>
+                        <button type="button" className="btn-primary" style={{ padding: '6px 10px' }} onClick={() => startEdit(t)}>Edit</button>
+                        <button type="button" className="btn-primary" style={{ padding: '6px 10px', background: '#DC2626' }} onClick={() => removeThought(t)}>Delete</button>
+                      </span>
+                    )}
                   </div>
-                  <div className="thought-text">
-                    <SafeText text={t.thought_text} />
-                  </div>
+                  {!isEditing ? (
+                    <div className="thought-text">
+                      <SafeText text={t.thought_text} />
+                    </div>
+                  ) : (
+                    <div className="form-grid" style={{ marginTop: 8 }}>
+                      {editError && (
+                        <div className="alert alert-error" role="alert" aria-live="assertive">
+                          <SafeText text={editError} />
+                        </div>
+                      )}
+                      <textarea
+                        value={editingText}
+                        onChange={(e) => setEditingText(e.target.value)}
+                        rows={4}
+                        maxLength={500}
+                        aria-label="Edit thought text"
+                      />
+                      <div className="actions" style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" className="btn-primary" onClick={() => submitEdit(t)}>Save</button>
+                        <button type="button" className="btn-primary" style={{ background: '#6B7280' }} onClick={cancelEdit}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </li>
               );
             })}
           </ul>
+          {deleteError && (
+            <div className="alert alert-error" role="alert" aria-live="assertive" style={{ marginTop: 12 }}>
+              <SafeText text={deleteError} />
+            </div>
+          )}
         </section>
       </>
     );
