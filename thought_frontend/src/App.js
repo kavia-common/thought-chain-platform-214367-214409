@@ -559,6 +559,18 @@ function App() {
         // remove from list and localStorage mapping
         setThoughts(thoughts.filter(t => String(t.id) !== String(thought.id)));
         removeTokenForId(thought.id);
+        // proactively refresh the list from server to ensure consistency in case of concurrent changes
+        try {
+          const ref = await fetch(`${apiBase}/thoughts`, { method: 'GET', headers: { 'Accept': 'application/json' } });
+          if (ref.ok) {
+            const data = await ref.json();
+            const list = Array.isArray(data) ? data : [];
+            list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+            setThoughts(list);
+          }
+        } catch {
+          // ignore refresh failure; local removal already applied
+        }
         return;
       }
       let msg = `Delete failed (${res.status})`;
