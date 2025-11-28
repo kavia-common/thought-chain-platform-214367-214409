@@ -484,6 +484,9 @@ function App() {
   const [editingText, setEditingText] = useState('');
   const [editError, setEditError] = useState('');
   const [deleteError, setDeleteError] = useState('');
+  // Delete UI feedback and control
+  const [deletingId, setDeletingId] = useState(null);
+  const [deleteSuccess, setDeleteSuccess] = useState('');
 
   async function startEdit(thought) {
     setEditingId(thought.id);
@@ -538,16 +541,27 @@ function App() {
 
   async function removeThought(thought) {
     setDeleteError('');
+    setDeleteSuccess('');
     const token = getTokenForId(thought.id);
     if (!token) {
       setDeleteError('Missing edit token for this thought.');
       return;
     }
+
     // Confirmation
     // eslint-disable-next-line no-alert
     const ok = window.confirm('Delete this thought? This action cannot be undone.');
     if (!ok) return;
+
+    setDeletingId(thought.id);
     try {
+      // Temporary logging for diagnostics
+      // eslint-disable-next-line no-console
+      console.log('[DELETE] Request', {
+        url: `${apiBase}/thoughts/${encodeURIComponent(thought.id)}`,
+        headers: { 'X-Edit-Token': token },
+      });
+
       const res = await fetch(`${apiBase}/thoughts/${encodeURIComponent(thought.id)}`, {
         method: 'DELETE',
         headers: {
@@ -555,10 +569,17 @@ function App() {
           'X-Edit-Token': token,
         },
       });
-      if (res.status === 204) {
+
+      // eslint-disable-next-line no-console
+      console.log('[DELETE] Response', { status: res.status });
+
+      if (res.status === 204 || res.status === 200) {
         // remove from list and localStorage mapping
         setThoughts(thoughts.filter(t => String(t.id) !== String(thought.id)));
         removeTokenForId(thought.id);
+
+        setDeleteSuccess('Thought deleted successfully.');
+
         // proactively refresh the list from server to ensure consistency in case of concurrent changes
         try {
           const ref = await fetch(`${apiBase}/thoughts`, { method: 'GET', headers: { 'Accept': 'application/json' } });
@@ -567,20 +588,47 @@ function App() {
             const list = Array.isArray(data) ? data : [];
             list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
             setThoughts(list);
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[DELETE] Refresh fetch failed', ref.status);
           }
-        } catch {
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('[DELETE] Refresh fetch error', err);
           // ignore refresh failure; local removal already applied
         }
         return;
       }
+
+      // Parse error content robustly
       let msg = `Delete failed (${res.status})`;
       try {
-        const err = await res.json();
-        if (err && (err.detail || err.message)) msg = err.detail || err.message;
-      } catch { /* ignore */ }
+        const ct = res.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          const err = await res.json();
+          if (err) {
+            if (typeof err.detail === 'string' && err.detail.trim()) msg = err.detail.trim();
+            else if (typeof err.message === 'string' && err.message.trim()) msg = err.message.trim();
+            else if (typeof err.error === 'string' && err.error.trim()) msg = err.error.trim();
+          }
+        } else {
+          const text = await res.text();
+          if (typeof text === 'string' && text.trim()) msg = text.trim();
+        }
+      } catch (parseErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[DELETE] Error parsing error response', parseErr);
+      }
+
+      // eslint-disable-next-line no-console
+      console.error('[DELETE] Failure', msg);
       setDeleteError(msg);
     } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[DELETE] Network error', e);
       setDeleteError(e.message || 'Network error while deleting.');
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -688,8 +736,30 @@ function App() {
                     </span>
                     {hasToken && !isEditing && (
                       <span style={{ display: 'inline-flex', gap: 8 }}>
-                        <button type="button" className="btn-primary" style={{ padding: '6px 10px' }} onClick={() => startEdit(t)}>Edit</button>
-                        <button type="button" className="btn-primary" style={{ padding: '6px 10px', background: '#DC2626' }} onClick={() => removeThought(t)}>Delete</button>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          style={{ padding: '6px 10px', opacity: deletingId === t.id ? 0.6 : 1 }}
+                          onClick={() => startEdit(t)}
+                          disabled={deletingId === t.id}
+                          aria-disabled={deletingId === t.id}
+                          aria-label={`Edit thought ${t.id}`}
+                          title="Edit"
+                        >
+                          {deletingId === t.id ? '...' : 'Edit'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          style={{ padding: '6px 10px', background: '#DC2626', opacity: deletingId === t.id ? 0.6 : 1 }}
+                          onClick={() => removeThought(t)}
+                          disabled={deletingId === t.id}
+                          aria-disabled={deletingId === t.id}
+                          aria-label={`Delete thought ${t.id}`}
+                          title="Delete"
+                        >
+                          {deletingId === t.id ? 'Deleting…' : 'Delete'}
+                        </button>
                       </span>
                     )}
                   </div>
@@ -724,6 +794,11 @@ function App() {
           {deleteError && (
             <div className="alert alert-error" role="alert" aria-live="assertive" style={{ marginTop: 12 }}>
               <SafeText text={deleteError} />
+            </div>
+          )}
+          {deleteSuccess && (
+            <div className="alert alert-success" role="status" aria-live="polite" style={{ marginTop: 12 }}>
+              <SafeText text={deleteSuccess} />
             </div>
           )}
         </section>
