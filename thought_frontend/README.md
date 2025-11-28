@@ -9,6 +9,8 @@ This project provides a minimal React template with a clean, modern UI and minim
 - **Fast**: Minimal dependencies for quick loading times
 - **Simple**: Easy to understand and modify
 
+> Note: Delete functionality is disabled across the app for safety. You can submit and edit your own thoughts (with device token), but cannot delete thoughts.
+
 ## Getting Started
 
 In the project directory, you can run:
