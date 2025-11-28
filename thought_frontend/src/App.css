@@ -36,9 +36,10 @@
 
 .container {
   width: 100%;
-  max-width: 920px;
+  max-width: 1100px; /* wider for analytics/calendar grids */
   margin: 0 auto;
   padding: 0 16px;
+  box-sizing: border-box;
 }
 
 /* Navbar */
@@ -55,16 +56,40 @@
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px;
+  gap: 12px;
+  flex-wrap: wrap; /* responsive */
 }
 
 .brand {
   font-weight: 800;
   font-size: 18px;
   letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 .brand-primary { color: var(--primary); margin-right: 4px; }
 .brand-secondary { color: var(--accent); }
+
+/* Simple nav pills */
+.nav-pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.nav-pill {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.nav-pill.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-contrast);
+}
 
 /* Theme toggle reused */
 .theme-toggle {
@@ -87,6 +112,18 @@
 /* Main */
 .main-content {
   padding: 24px 16px 48px;
+}
+
+/* Grid helpers */
+.grid {
+  display: grid;
+  gap: 12px;
+}
+.grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 /* Card */
@@ -203,6 +240,11 @@ textarea:focus {
   background: linear-gradient(90deg, rgba(30,58,138,0.06), rgba(245,158,11,0.06));
 }
 
+.thought-item.highlight {
+  outline: 2px solid var(--accent);
+  box-shadow: 0 0 0 4px rgba(245,158,11,0.25);
+}
+
 .thought-meta {
   font-size: 13px;
   color: var(--text-muted);
@@ -210,6 +252,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .dot {
@@ -219,6 +262,62 @@ textarea:focus {
 .thought-text {
   font-size: 15px;
   line-height: 1.5;
+}
+
+/* User badge with dynamic color border */
+.user-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.02);
+  font-weight: 600;
+}
+
+/* Streak chip */
+.streak-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(30,58,138,0.08);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* Calendar grid */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.calendar-cell {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  min-height: 76px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+.calendar-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.calendar-bubbles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.bubble {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  outline: 1px solid rgba(0,0,0,0.08);
 }
 
 /* Footer */
@@ -234,7 +333,16 @@ textarea:focus {
 }
 
 /* Responsive */
+@media (max-width: 900px) {
+  .grid-3 { grid-template-columns: 1fr 1fr; }
+}
 @media (max-width: 640px) {
   .brand { font-size: 16px; }
   .section-title { font-size: 16px; }
+  .app-navbar .container { justify-content: center; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .calendar-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .calendar-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

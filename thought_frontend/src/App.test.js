@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import App from './App';
 
-test('renders learn react link', () => {
+test('renders app brand', () => {
   render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+  const brand1 = screen.getByText(/Daily/i);
+  const brand2 = screen.getByText(/Thought Chain/i);
+  expect(brand1).toBeInTheDocument();
+  expect(brand2).toBeInTheDocument();
 });

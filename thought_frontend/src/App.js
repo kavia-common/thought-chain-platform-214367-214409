@@ -4,6 +4,7 @@ import './App.css';
 /**
  * Utility: Determine API base from env with fallback.
  */
+// PUBLIC_INTERFACE
 function useApiBase() {
   const base = useMemo(() => {
     const envBase = process.env.REACT_APP_API_BASE;
@@ -15,6 +16,7 @@ function useApiBase() {
 /**
  * Format a date string to YYYY-MM-DD (local).
  */
+// PUBLIC_INTERFACE
 function formatDate(isoString) {
   try {
     const d = new Date(isoString);
@@ -28,6 +30,26 @@ function formatDate(isoString) {
 }
 
 /**
+ * Deterministic color from username -> HSL string.
+ */
+// PUBLIC_INTERFACE
+function userColor(username) {
+  const str = String(username ?? '');
+  // simple DJB2 hash
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    // eslint-disable-next-line no-bitwise
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    // eslint-disable-next-line no-bitwise
+    hash = hash & hash;
+  }
+  const hue = Math.abs(hash) % 360;
+  const sat = 65;
+  const light = 50;
+  return `hsl(${hue} ${sat}% ${light}%)`;
+}
+
+/**
  * Safe text rendering: rely on React's default escaping by returning plain text.
  * We also trim for visual cleanliness.
  */
@@ -35,9 +57,157 @@ function SafeText({ text }) {
   return <>{(text ?? '').toString()}</>;
 }
 
+/**
+ * Lightweight hash router using hash fragment (#/route).
+ * Defaults to "home".
+ */
+function useHashRoute() {
+  const getRoute = () => {
+    const hash = window.location.hash || '#/home';
+    const route = hash.replace(/^#\//, '') || 'home';
+    return route;
+  };
+  const [route, setRoute] = useState(getRoute());
+  useEffect(() => {
+    const handler = () => setRoute(getRoute());
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
+  // PUBLIC_INTERFACE
+  const navigate = (to) => {
+    const next = `#/` + (to || 'home');
+    if (window.location.hash !== next) window.location.hash = next;
+    else {
+      // force update to re-render if same route (for shareable params changes)
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
+  };
+  return { route, navigate };
+}
+
+/**
+ * Read ?highlightId=... from URL search params (shareable links).
+ */
+// PUBLIC_INTERFACE
+function useHighlightId() {
+  const [highlightId, setHighlightId] = useState(null);
+  useEffect(() => {
+    const update = () => {
+      const sp = new URLSearchParams(window.location.search);
+      const v = sp.get('highlightId');
+      setHighlightId(v);
+    };
+    update();
+    window.addEventListener('popstate', update);
+    window.addEventListener('hashchange', update);
+    return () => {
+      window.removeEventListener('popstate', update);
+      window.removeEventListener('hashchange', update);
+    };
+  }, []);
+  return highlightId;
+}
+
+/**
+ * Compute per-user streaks (consecutive daily posts) from oldest-first thoughts.
+ * Returns: { byUser: { [username]: { current: number, max: number, days: string[] } }, globalMax: number }
+ */
+// PUBLIC_INTERFACE
+function computeStreaks(thoughts) {
+  // Group by user -> set of dates
+  const byUserDates = {};
+  for (const t of thoughts || []) {
+    const u = (t.username ?? '').toString();
+    const d = formatDate(t.created_at);
+    if (!byUserDates[u]) byUserDates[u] = new Set();
+    byUserDates[u].add(d);
+  }
+  const res = { byUser: {}, globalMax: 0 };
+  const todayStr = formatDate(new Date().toISOString());
+
+  function dateMinusOne(dstr) {
+    const d = new Date(dstr);
+    d.setDate(d.getDate() - 1);
+    return formatDate(d.toISOString());
+  }
+
+  Object.entries(byUserDates).forEach(([user, dateSet]) => {
+    // Sort dates asc
+    const dates = Array.from(dateSet).sort();
+    // Compute max streak
+    let maxStreak = 0;
+    let currStreak = 0;
+    let last = null;
+    for (const ds of dates) {
+      if (last) {
+        if (ds === last) {
+          // same day duplicate shouldn't occur, but ignore
+        } else {
+          const prev = dateMinusOne(ds);
+          if (prev === last) currStreak += 1;
+          else currStreak = 1;
+        }
+      } else {
+        currStreak = 1;
+      }
+      last = ds;
+      if (currStreak > maxStreak) maxStreak = currStreak;
+    }
+    // Compute current streak ending today (or most recent date)
+    let current = 0;
+    // iterate from latest backwards
+    for (let i = dates.length - 1; i >= 0; i--) {
+      const ds = dates[i];
+      if (current === 0) {
+        // If latest date equals today or is some date; start current as 1
+        current = 1;
+      } else {
+        const expected = dateMinusOne(dates[i + (current - 1)]);
+        if (ds === expected) current += 1;
+        else break;
+      }
+    }
+    res.byUser[user] = { current: current || 0, max: maxStreak || 0, days: dates };
+    if (maxStreak > res.globalMax) res.globalMax = maxStreak;
+    // If user has today's date ensure current streak is continuous to today
+    if (dates.length > 0) {
+      const latest = dates[dates.length - 1];
+      if (latest !== todayStr) {
+        // streak considered up to latest day, not necessarily today
+      }
+    }
+  });
+
+  return res;
+}
+
+/**
+ * Compute simple word frequency map from thought_texts (client-side)
+ * Returns topK descending array of { word, count }
+ */
+// PUBLIC_INTERFACE
+function computeWordFrequency(thoughts, topK = 25) {
+  const stop = new Set(['the','a','an','and','or','to','of','in','on','for','is','are','am','i','it','that','this','with','as','at','be','by','from','was','were','but','so','we','you','they','he','she','them','his','her','our','your']);
+  const freq = {};
+  for (const t of thoughts || []) {
+    const text = (t.thought_text || '').toLowerCase();
+    const words = text.match(/[a-z0-9']+/g) || [];
+    for (const w of words) {
+      if (w.length < 2) continue;
+      if (stop.has(w)) continue;
+      freq[w] = (freq[w] || 0) + 1;
+    }
+  }
+  const arr = Object.entries(freq).map(([word, count]) => ({ word, count }));
+  arr.sort((a, b) => b.count - a.count);
+  return arr.slice(0, topK);
+}
+
 // PUBLIC_INTERFACE
 function App() {
   const apiBase = useApiBase();
+  const { route, navigate } = useHashRoute();
+  const highlightId = useHighlightId();
 
   // Theme handling (preserve template feature)
   const [theme, setTheme] = useState('light');
@@ -157,26 +327,76 @@ function App() {
     }
   }
 
-  return (
-    <div className="App">
-      <header className="app-navbar" role="banner">
-        <div className="container">
-          <div className="brand">
-            <span className="brand-primary">Daily</span>
-            <span className="brand-secondary">Thought Chain</span>
-          </div>
-          <button
-            className="theme-toggle"
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-            type="button"
-          >
-            {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-          </button>
-        </div>
-      </header>
+  // Derived: calendar groups
+  const groupedByDate = useMemo(() => {
+    const map = {};
+    for (const t of thoughts) {
+      const d = formatDate(t.created_at);
+      if (!map[d]) map[d] = [];
+      map[d].push(t);
+    }
+    return map;
+  }, [thoughts]);
 
-      <main className="container main-content" role="main">
+  // Derived: analytics
+  const streaks = useMemo(() => computeStreaks(thoughts), [thoughts]);
+  const wordTop = useMemo(() => computeWordFrequency(thoughts, 25), [thoughts]);
+
+  // Helpers
+  function userBadge(username) {
+    const color = userColor(username);
+    const style = { borderColor: color, color };
+    return (
+      <span className="user-badge" style={style} title={`User: ${username}`}>
+        <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
+        <SafeText text={username} />
+      </span>
+    );
+  }
+
+  function streakChip(n, label = 'streak') {
+    // simple sparkline-like bars
+    const bars = Array.from({ length: Math.min(10, Math.max(1, n)) }, (_, i) => i);
+    return (
+      <span className="streak-chip" title={`${n} day ${label}`}>
+        {n}d
+        <span style={{ display: 'inline-flex', gap: 2 }}>
+          {bars.map((i) => (
+            <span key={i} style={{
+              width: 4,
+              height: 8 + ((i % 3) * 3),
+              background: 'currentColor',
+              opacity: 0.7,
+              borderRadius: 2
+            }} />
+          ))}
+        </span>
+      </span>
+    );
+  }
+
+  // Calendar generator: simple month range around min/max thoughts
+  const calendarDays = useMemo(() => {
+    const dates = Object.keys(groupedByDate).sort();
+    if (dates.length === 0) return [];
+    const start = new Date(dates[0]);
+    const end = new Date(dates[dates.length - 1]);
+    // Normalize to first/last day of month for a pleasant grid
+    const first = new Date(start.getFullYear(), start.getMonth(), 1);
+    const last = new Date(end.getFullYear(), end.getMonth() + 1, 0);
+    const list = [];
+    const cur = new Date(first);
+    while (cur <= last) {
+      list.push(formatDate(cur.toISOString()));
+      cur.setDate(cur.getDate() + 1);
+    }
+    return list;
+  }, [groupedByDate]);
+
+  // Render sections (routes)
+  function renderHome() {
+    return (
+      <>
         <section className="card" aria-labelledby="submit-title">
           <h2 id="submit-title" className="section-title">Submit Your Thought</h2>
 
@@ -258,22 +478,144 @@ function App() {
           )}
 
           <ul className="thought-list">
-            {thoughts.map(t => (
-              <li className="thought-item" key={t.id ?? `${t.username}-${t.created_at}`}>
-                <div className="thought-meta">
-                  <span className="thought-date">{formatDate(t.created_at)}</span>
-                  <span className="dot">•</span>
-                  <span className="thought-user">
-                    <SafeText text={t.username} />
-                  </span>
-                </div>
-                <div className="thought-text">
-                  <SafeText text={t.thought_text} />
-                </div>
-              </li>
-            ))}
+            {thoughts.map(t => {
+              const key = t.id ?? `${t.username}-${t.created_at}`;
+              const isHighlight = highlightId && String(t.id) === String(highlightId);
+              return (
+                <li className={`thought-item ${isHighlight ? 'highlight' : ''}`} key={key} id={`thought-${t.id}`}>
+                  <div className="thought-meta">
+                    <span className="thought-date">{formatDate(t.created_at)}</span>
+                    <span className="dot">•</span>
+                    <span className="thought-user">
+                      {userBadge(t.username)}
+                    </span>
+                    <span className="dot">•</span>
+                    {streaks.byUser[t.username] ? streakChip(streaks.byUser[t.username].current, 'streak') : null}
+                  </div>
+                  <div className="thought-text">
+                    <SafeText text={t.thought_text} />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </section>
+      </>
+    );
+  }
+
+  function renderCalendar() {
+    return (
+      <section className="card" aria-labelledby="calendar-title">
+        <h2 id="calendar-title" className="section-title">Calendar View</h2>
+        {calendarDays.length === 0 ? (
+          <div className="muted">No thoughts to display.</div>
+        ) : (
+          <div className="calendar-grid" role="grid">
+            {calendarDays.map((ds) => {
+              const items = groupedByDate[ds] || [];
+              return (
+                <div key={ds} className="calendar-cell" role="gridcell" aria-label={`Day ${ds} has ${items.length} thoughts`}>
+                  <div className="calendar-date">{ds}</div>
+                  <div className="calendar-bubbles">
+                    {items.map((t) => {
+                      const color = userColor(t.username);
+                      return <span key={t.id ?? `${t.username}-${t.created_at}`} className="bubble" title={`${t.username}: ${t.thought_text}`} style={{ background: color }} />;
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function renderAnalytics() {
+    const users = Object.keys(streaks.byUser).sort();
+    return (
+      <section className="card" aria-labelledby="analytics-title">
+        <h2 id="analytics-title" className="section-title">Analytics</h2>
+        {thoughts.length === 0 ? (
+          <div className="muted">No data yet.</div>
+        ) : (
+          <div className="grid grid-2">
+            <div>
+              <h3 className="section-title" style={{ fontSize: 16 }}>User Streaks</h3>
+              <ul className="thought-list">
+                {users.map((u) => {
+                  const s = streaks.byUser[u];
+                  return (
+                    <li className="thought-item" key={u}>
+                      <div className="thought-meta" style={{ justifyContent: 'space-between' }}>
+                        <span>{userBadge(u)}</span>
+                        <span style={{ display: 'inline-flex', gap: 8 }}>
+                          {streakChip(s.current, 'current')}
+                          {streakChip(s.max, 'max')}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <div>
+              <h3 className="section-title" style={{ fontSize: 16 }}>Top Words</h3>
+              <ul className="thought-list">
+                {wordTop.map(({ word, count }) => (
+                  <li className="thought-item" key={word}>
+                    <div className="thought-meta" style={{ justifyContent: 'space-between' }}>
+                      <span><SafeText text={word} /></span>
+                      <span className="muted">{count}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  // Auto-scroll to highlighted thought (shareable link UX)
+  useEffect(() => {
+    if (!highlightId) return;
+    const el = document.getElementById(`thought-${highlightId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightId, thoughts]);
+
+  return (
+    <div className="App">
+      <header className="app-navbar" role="banner">
+        <div className="container">
+          <div className="brand">
+            <span className="brand-primary">Daily</span>
+            <span className="brand-secondary">Thought Chain</span>
+          </div>
+
+          <nav className="nav-pills" aria-label="Primary">
+            <button className={`nav-pill ${route === 'home' ? 'active' : ''}`} onClick={() => navigate('home')} type="button">Home</button>
+            <button className={`nav-pill ${route === 'calendar' ? 'active' : ''}`} onClick={() => navigate('calendar')} type="button">Calendar</button>
+            <button className={`nav-pill ${route === 'analytics' ? 'active' : ''}`} onClick={() => navigate('analytics')} type="button">Analytics</button>
+          </nav>
+
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+            type="button"
+          >
+            {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
+          </button>
+        </div>
+      </header>
+
+      <main className="container main-content" role="main">
+        {route === 'calendar' ? renderCalendar() : route === 'analytics' ? renderAnalytics() : renderHome()}
       </main>
 
       <footer className="app-footer" role="contentinfo">
