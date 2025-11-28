@@ -722,6 +722,14 @@ function App() {
           <div className="grid grid-2">
             <div>
               <h3 className="section-title" style={{ fontSize: 16 }}>User Streaks</h3>
+              <div className="thought-item" style={{ marginBottom: 12 }}>
+                <div className="thought-meta" style={{ justifyContent: 'space-between' }}>
+                  <span>Longest streak (global)</span>
+                  <span style={{ display: 'inline-flex', gap: 8 }}>
+                    {streakChip(streaks.globalMax || 0, 'longest')}
+                  </span>
+                </div>
+              </div>
               <ul className="thought-list">
                 {users.map((u) => {
                   const s = streaks.byUser[u];
@@ -731,7 +739,7 @@ function App() {
                         <span>{userBadge(u)}</span>
                         <span style={{ display: 'inline-flex', gap: 8 }}>
                           {streakChip(s.current, 'current')}
-                          {streakChip(s.max, 'max')}
+                          {streakChip(s.max, 'longest')}
                         </span>
                       </div>
                     </li>
