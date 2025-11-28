@@ -458,6 +458,7 @@ function App() {
   }, [groupedByDate]);
 
   // Local storage helpers for edit tokens
+  // Stores a map of { [id: string]: edit_token } as provided by POST /thoughts response
   function getTokenForId(id) {
     try {
       const map = JSON.parse(localStorage.getItem('thought_edit_tokens') || '{}');
@@ -558,14 +559,16 @@ function App() {
       // Temporary logging for diagnostics
       // eslint-disable-next-line no-console
       console.log('[DELETE] Request', {
+        id: thought.id,
         url: `${apiBase}/thoughts/${encodeURIComponent(thought.id)}`,
-        headers: { 'X-Edit-Token': token },
+        headerProvided: !!token,
       });
 
       const res = await fetch(`${apiBase}/thoughts/${encodeURIComponent(thought.id)}`, {
         method: 'DELETE',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
+          // Backend expects X-Edit-Token header (or ?token); send header explicitly
           'X-Edit-Token': token,
         },
       });
@@ -582,7 +585,7 @@ function App() {
 
         // proactively refresh the list from server to ensure consistency in case of concurrent changes
         try {
-          const ref = await fetch(`${apiBase}/thoughts`, { method: 'GET', headers: { 'Accept': 'application/json' } });
+          const ref = await fetch(`${apiBase}/thoughts`, { method: 'GET', headers: { Accept: 'application/json' } });
           if (ref.ok) {
             const data = await ref.json();
             const list = Array.isArray(data) ? data : [];
@@ -734,6 +737,11 @@ function App() {
                       <span className="dot">•</span>
                       {streaks.byUser[t.username] ? streakChip(streaks.byUser[t.username].current, 'streak') : null}
                     </span>
+                    {!hasToken && !isEditing && (
+                      <span className="muted" title="You can only edit/delete items created from this browser (ownership token missing).">
+                        Cannot edit/delete here — ownership token not found on this device.
+                      </span>
+                    )}
                     {hasToken && !isEditing && (
                       <span style={{ display: 'inline-flex', gap: 8 }}>
                         <button
