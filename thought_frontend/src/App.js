@@ -287,6 +287,30 @@ function App() {
     if (v.length > 0) return;
 
     try {
+      // Include persistent anonymous token and normalize error parsing to avoid "[object Object]"
+      function getOrCreateAnonToken() {
+        try {
+          const key = 'dailyThoughtAnonToken';
+          let tok = localStorage.getItem(key);
+          if (!tok) {
+            const arr = new Uint8Array(16);
+            // Use Web Crypto if available for good randomness
+            if (window.crypto && window.crypto.getRandomValues) {
+              window.crypto.getRandomValues(arr);
+            } else {
+              // Fallback: Math.random
+              for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+            }
+            tok = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+            localStorage.setItem(key, tok);
+          }
+          return tok;
+        } catch {
+          // Safe fallback token
+          return 'fallback-' + String(Date.now());
+        }
+      }
+
       const res = await fetch(`${apiBase}/thoughts`, {
         method: 'POST',
         headers: {
@@ -295,20 +319,49 @@ function App() {
         },
         body: JSON.stringify({
           username: username.trim(),
-          thought_text: thoughtText.trim()
+          thought_text: thoughtText.trim(),
+          token: getOrCreateAnonToken()
         })
       });
 
       if (!res.ok) {
-        // Try to parse error message from backend
-        let message = `Submission failed (${res.status})`;
+        // Try JSON first
+        let message = '';
         try {
-          const errData = await res.json();
-          if (errData && (errData.detail || errData.message || errData.error)) {
-            message = errData.detail || errData.message || errData.error;
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('application/json')) {
+            const errData = await res.json();
+            // Prefer explicit fields
+            if (errData) {
+              if (typeof errData.detail === 'string' && errData.detail.trim()) {
+                message = errData.detail.trim();
+              } else if (Array.isArray(errData.detail) && errData.detail.length > 0 && errData.detail[0]?.msg) {
+                // FastAPI validation error array
+                message = String(errData.detail[0].msg);
+              } else if (typeof errData.message === 'string' && errData.message.trim()) {
+                message = errData.message.trim();
+              } else if (typeof errData.error === 'string' && errData.error.trim()) {
+                message = errData.error.trim();
+              }
+            }
           }
         } catch {
-          // ignore json parse errors
+          // ignore
+        }
+        // Fallback to text body
+        if (!message) {
+          try {
+            const text = await res.text();
+            if (typeof text === 'string' && text.trim()) {
+              message = text.trim();
+            }
+          } catch {
+            // ignore
+          }
+        }
+        // Final fallback to status text
+        if (!message) {
+          message = res.statusText || `Submission failed (${res.status})`;
         }
         setSubmitError(message);
         return;
